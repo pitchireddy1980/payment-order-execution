@@ -289,6 +289,27 @@ Run tests using Maven:
 mvn test
 ```
 
+### Code coverage (JaCoCo)
+
+Code coverage is generated with [JaCoCo](https://www.jacoco.org/jacoco/). To produce the report:
+
+```bash
+mvn clean verify
+```
+
+The HTML report is written to **`target/site/jacoco/index.html`**. Open that file in a browser to see line/branch coverage by package and class.
+
+- **Included in report:** controllers, services, repositories, exception handlers.
+- **Excluded from report:** `PaymentSystemApplication`, `config`, `dto`, and `entity` packages (to focus on business and API logic).
+
+To run tests with coverage without running the full verify phase (e.g. skip package):
+
+```bash
+mvn clean test jacoco:report
+```
+
+Coverage data is recorded in `target/jacoco.exec` during tests; the report is generated from that file.
+
 ## 🔐 Security Considerations
 
 - Add Spring Security for authentication/authorization

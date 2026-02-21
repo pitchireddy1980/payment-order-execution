@@ -4,6 +4,7 @@ import com.example.paymentsystem.dto.PaymentOrderDTO;
 import com.example.paymentsystem.entity.PaymentMethod;
 import com.example.paymentsystem.entity.PaymentOrder;
 import com.example.paymentsystem.entity.PaymentOrderStatus;
+import com.example.paymentsystem.exception.InvalidOperationException;
 import com.example.paymentsystem.exception.ResourceNotFoundException;
 import com.example.paymentsystem.repository.PaymentOrderRepository;
 import com.example.paymentsystem.service.impl.PaymentOrderServiceImpl;
@@ -16,12 +17,14 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.modelmapper.ModelMapper;
 
 import java.math.BigDecimal;
+import java.time.LocalDateTime;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.List;
 import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.*;
-import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
@@ -231,5 +234,163 @@ class PaymentOrderServiceTest {
 
         // Assert
         assertEquals(expectedTotal, total);
+    }
+
+    @Test
+    void testGetOrderByReference_NotFound() {
+        when(orderRepository.findByOrderReference("ORD-NOTFOUND")).thenReturn(Optional.empty());
+
+        assertThrows(ResourceNotFoundException.class, () -> {
+            orderService.getOrderByReference("ORD-NOTFOUND");
+        });
+    }
+
+    @Test
+    void testGetAllOrders_Success() {
+        List<PaymentOrder> orders = Arrays.asList(testOrder);
+        when(orderRepository.findAll()).thenReturn(orders);
+        when(modelMapper.map(any(PaymentOrder.class), eq(PaymentOrderDTO.class))).thenReturn(testOrderDTO);
+
+        List<PaymentOrderDTO> result = orderService.getAllOrders();
+
+        assertNotNull(result);
+        assertEquals(1, result.size());
+    }
+
+    @Test
+    void testGetAllOrders_Empty() {
+        when(orderRepository.findAll()).thenReturn(Collections.emptyList());
+
+        List<PaymentOrderDTO> result = orderService.getAllOrders();
+
+        assertNotNull(result);
+        assertTrue(result.isEmpty());
+    }
+
+    @Test
+    void testGetOrdersBetweenDates_Success() {
+        LocalDateTime start = LocalDateTime.of(2024, 1, 1, 0, 0);
+        LocalDateTime end = LocalDateTime.of(2024, 12, 31, 23, 59);
+        when(orderRepository.findOrdersBetweenDates(start, end)).thenReturn(Arrays.asList(testOrder));
+        when(modelMapper.map(any(PaymentOrder.class), eq(PaymentOrderDTO.class))).thenReturn(testOrderDTO);
+
+        List<PaymentOrderDTO> result = orderService.getOrdersBetweenDates(start, end);
+
+        assertNotNull(result);
+        assertEquals(1, result.size());
+    }
+
+    @Test
+    void testGetOrdersByAmountRange_Success() {
+        BigDecimal min = new BigDecimal("50");
+        BigDecimal max = new BigDecimal("500");
+        when(orderRepository.findOrdersByAmountRange(min, max)).thenReturn(Arrays.asList(testOrder));
+        when(modelMapper.map(any(PaymentOrder.class), eq(PaymentOrderDTO.class))).thenReturn(testOrderDTO);
+
+        List<PaymentOrderDTO> result = orderService.getOrdersByAmountRange(min, max);
+
+        assertNotNull(result);
+        assertEquals(1, result.size());
+    }
+
+    @Test
+    void testUpdateOrder_Success() {
+        when(orderRepository.findById(1L)).thenReturn(Optional.of(testOrder));
+        when(orderRepository.save(any(PaymentOrder.class))).thenReturn(testOrder);
+        when(modelMapper.map(testOrder, PaymentOrderDTO.class)).thenReturn(testOrderDTO);
+
+        PaymentOrderDTO result = orderService.updateOrder(1L, testOrderDTO);
+
+        assertNotNull(result);
+        verify(orderRepository).save(any(PaymentOrder.class));
+    }
+
+    @Test
+    void testUpdateOrder_OrderNotFound() {
+        when(orderRepository.findById(999L)).thenReturn(Optional.empty());
+
+        assertThrows(ResourceNotFoundException.class, () -> {
+            orderService.updateOrder(999L, testOrderDTO);
+        });
+    }
+
+    @Test
+    void testUpdateOrder_NonPending_ThrowsInvalidOperation() {
+        testOrder.setStatus(PaymentOrderStatus.COMPLETED);
+        when(orderRepository.findById(1L)).thenReturn(Optional.of(testOrder));
+
+        assertThrows(InvalidOperationException.class, () -> {
+            orderService.updateOrder(1L, testOrderDTO);
+        });
+        verify(orderRepository, never()).save(any(PaymentOrder.class));
+    }
+
+    @Test
+    void testUpdateOrderStatus_CompletedToRefunded_Success() {
+        testOrder.setStatus(PaymentOrderStatus.COMPLETED);
+        when(orderRepository.findById(1L)).thenReturn(Optional.of(testOrder));
+        when(orderRepository.save(any(PaymentOrder.class))).thenReturn(testOrder);
+        when(modelMapper.map(testOrder, PaymentOrderDTO.class)).thenReturn(testOrderDTO);
+
+        PaymentOrderDTO result = orderService.updateOrderStatus(1L, PaymentOrderStatus.REFUNDED);
+
+        assertNotNull(result);
+        verify(orderRepository).save(any(PaymentOrder.class));
+    }
+
+    @Test
+    void testUpdateOrderStatus_CompletedToOther_ThrowsInvalidOperation() {
+        testOrder.setStatus(PaymentOrderStatus.COMPLETED);
+        when(orderRepository.findById(1L)).thenReturn(Optional.of(testOrder));
+
+        assertThrows(InvalidOperationException.class, () -> {
+            orderService.updateOrderStatus(1L, PaymentOrderStatus.PROCESSING);
+        });
+    }
+
+    @Test
+    void testUpdateOrderStatus_Cancelled_ThrowsInvalidOperation() {
+        testOrder.setStatus(PaymentOrderStatus.CANCELLED);
+        when(orderRepository.findById(1L)).thenReturn(Optional.of(testOrder));
+
+        assertThrows(InvalidOperationException.class, () -> {
+            orderService.updateOrderStatus(1L, PaymentOrderStatus.PROCESSING);
+        });
+    }
+
+    @Test
+    void testCancelOrder_WhenCompleted_ThrowsInvalidOperation() {
+        testOrder.setStatus(PaymentOrderStatus.COMPLETED);
+        when(orderRepository.findById(1L)).thenReturn(Optional.of(testOrder));
+
+        assertThrows(InvalidOperationException.class, () -> orderService.cancelOrder(1L));
+        verify(orderRepository, never()).save(any(PaymentOrder.class));
+    }
+
+    @Test
+    void testCancelOrder_WhenAlreadyCancelled_ThrowsInvalidOperation() {
+        testOrder.setStatus(PaymentOrderStatus.CANCELLED);
+        when(orderRepository.findById(1L)).thenReturn(Optional.of(testOrder));
+
+        assertThrows(InvalidOperationException.class, () -> orderService.cancelOrder(1L));
+    }
+
+    @Test
+    void testDeleteOrder_NotFound() {
+        when(orderRepository.existsById(999L)).thenReturn(false);
+
+        assertThrows(ResourceNotFoundException.class, () -> orderService.deleteOrder(999L));
+        verify(orderRepository, never()).deleteById(anyLong());
+    }
+
+    @Test
+    void testGetTotalAmountByCustomerAndStatus_NullReturnsZero() {
+        when(orderRepository.sumAmountByCustomerIdAndStatus("CUST001", PaymentOrderStatus.PENDING))
+                .thenReturn(null);
+
+        BigDecimal total = orderService.getTotalAmountByCustomerAndStatus(
+                "CUST001", PaymentOrderStatus.PENDING);
+
+        assertEquals(BigDecimal.ZERO, total);
     }
 }
